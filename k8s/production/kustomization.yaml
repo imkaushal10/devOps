@@ -12,6 +12,17 @@ labels:
 resources:
   - ../base
 
+images:
+  - name: techcommerce-frontend
+    newName: imkaushal10/techcommerce-frontend
+    newTag: latest
+  - name: techcommerce-product-api
+    newName: imkaushal10/techcommerce-product-api
+    newTag: latest
+  - name: techcommerce-order-api
+    newName: imkaushal10/techcommerce-order-api
+    newTag: latest
+
 configMapGenerator:
   - name: app-config
     behavior: merge
