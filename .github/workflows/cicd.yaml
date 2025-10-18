@@ -235,7 +235,6 @@ jobs:
     environment:
       name: production
       url: http://techcommerce.local
-      reviewers: [team-member]
 
     steps:
       - uses: actions/checkout@v3
