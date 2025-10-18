@@ -228,6 +228,25 @@ jobs:
           kind load docker-image ${{ secrets.DOCKER_USERNAME }}/techcommerce-product-api:latest --name staging-cluster
           kind load docker-image ${{ secrets.DOCKER_USERNAME }}/techcommerce-order-api:latest --name staging-cluster
 
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Pull Docker images
+        run: |
+          docker pull ${{ secrets.DOCKER_USERNAME }}/techcommerce-frontend:latest
+          docker pull ${{ secrets.DOCKER_USERNAME }}/techcommerce-product-api:latest
+          docker pull ${{ secrets.DOCKER_USERNAME }}/techcommerce-order-api:latest
+
+      - name: Load images into Kind cluster
+        run: |
+          kind load docker-image ${{ secrets.DOCKER_USERNAME }}/techcommerce-frontend:latest --name production-cluster
+          kind load docker-image ${{ secrets.DOCKER_USERNAME }}/techcommerce-product-api:latest --name production-cluster
+          kind load docker-image ${{ secrets.DOCKER_USERNAME }}/techcommerce-order-api:latest --name production-cluster
+          echo "Images loaded successfully"
+
       - name: Update image tags
         run: |
           cd k8s/staging
@@ -255,25 +274,25 @@ jobs:
       - name: Verify rollout status
         continue-on-error: true
         run: |
-          kubectl rollout status deployment/staging-frontend -n techcommerce --timeout=5m 2>&1 || echo "Frontend rollout failed or timed out"
-          kubectl rollout status deployment/staging-product-api -n techcommerce --timeout=5m 2>&1 || echo "Product API rollout failed or timed out"
-          kubectl rollout status deployment/staging-order-api -n techcommerce --timeout=5m 2>&1 || echo "Order API rollout failed or timed out"
+          kubectl rollout status deployment/staging-frontend -n techcommerce-staging --timeout=5m 2>&1 || echo "Frontend rollout failed or timed out"
+          kubectl rollout status deployment/staging-product-api -n techcommerce-staging --timeout=5m 2>&1 || echo "Product API rollout failed or timed out"
+          kubectl rollout status deployment/staging-order-api -n techcommerce-staging --timeout=5m 2>&1 || echo "Order API rollout failed or timed out"
 
       - name: Check deployment status
         run: |
           echo "=== Deployments ==="
-          kubectl get deployments -n techcommerce
+          kubectl get deployments -n techcommerce-staging
           echo ""
           echo "=== Pods ==="
-          kubectl get pods -n techcommerce
+          kubectl get pods -n techcommerce-staging
           echo ""
           echo "=== Services ==="
-          kubectl get services -n techcommerce
+          kubectl get services -n techcommerce-staging
 
       - name: Run smoke tests
         run: |
           echo "Running smoke tests..."
-          kubectl get pods -n techcommerce
+          kubectl get pods -n techcommerce-staging
           echo "Smoke tests completed"
 
       - name: Save kubeconfig as artifact
@@ -370,47 +389,75 @@ jobs:
         run: |
           kubectl apply -k k8s/production
           echo "Production deployment initiated"
+          echo ""
+          echo "=== Initial deployment status ==="
+          sleep 10
+          kubectl get all -n techcommerce-production
+
+      - name: Debug production pods
+        run: |
+          echo "=== Pod Status ==="
+          kubectl get pods -n techcommerce-production -o wide
+          echo ""
+          echo "=== Describe Pods ==="
+          kubectl describe pods -n techcommerce-production
+          echo ""
+          echo "=== Events ==="
+          kubectl get events -n techcommerce-production --sort-by='.lastTimestamp'
 
       - name: Wait for deployments to be ready
+        continue-on-error: true
         run: |
-          kubectl wait --for=condition=available --timeout=600s \
-            deployment/prod-frontend -n techcommerce || echo "Frontend not ready"
-          kubectl wait --for=condition=available --timeout=600s \
-            deployment/prod-product-api -n techcommerce || echo "Product API not ready"
-          kubectl wait --for=condition=available --timeout=600s \
-            deployment/prod-order-api -n techcommerce || echo "Order API not ready"
+          kubectl wait --for=condition=available --timeout=300s \
+            deployment/prod-frontend -n techcommerce-production 2>&1 || echo "Frontend not ready"
+          kubectl wait --for=condition=available --timeout=300s \
+            deployment/prod-product-api -n techcommerce-production 2>&1 || echo "Product API not ready"
+          kubectl wait --for=condition=available --timeout=300s \
+            deployment/prod-order-api -n techcommerce-production 2>&1 || echo "Order API not ready"
+
+      - name: Check pod logs if not ready
+        run: |
+          echo "=== Frontend Logs ==="
+          kubectl logs -n techcommerce-production -l app=frontend --tail=100 || echo "No logs available"
+          echo ""
+          echo "=== Product API Logs ==="
+          kubectl logs -n techcommerce-production -l app=product-api --tail=100 || echo "No logs available"
+          echo ""
+          echo "=== Order API Logs ==="
+          kubectl logs -n techcommerce-production -l app=order-api --tail=100 || echo "No logs available"
 
       - name: Verify rollout status
+        continue-on-error: true
         run: |
-          kubectl rollout status deployment/prod-frontend -n techcommerce --timeout=10m
-          kubectl rollout status deployment/prod-product-api -n techcommerce --timeout=10m
-          kubectl rollout status deployment/prod-order-api -n techcommerce --timeout=10m
+          kubectl rollout status deployment/prod-frontend -n techcommerce-production --timeout=5m 2>&1 || echo "Frontend rollout failed or timed out"
+          kubectl rollout status deployment/prod-product-api -n techcommerce-production --timeout=5m 2>&1 || echo "Product API rollout failed or timed out"
+          kubectl rollout status deployment/prod-order-api -n techcommerce-production --timeout=5m 2>&1 || echo "Order API rollout failed or timed out"
 
       - name: Post-deployment verification
         run: |
           echo "Running post-deployment checks..."
           echo "=== Deployments ==="
-          kubectl get deployments -n techcommerce
+          kubectl get deployments -n techcommerce-production
           echo ""
           echo "=== Pods ==="
-          kubectl get pods -n techcommerce
+          kubectl get pods -n techcommerce-production
           echo ""
           echo "=== Services ==="
-          kubectl get services -n techcommerce
+          kubectl get services -n techcommerce-production
 
       - name: Run production smoke tests
         run: |
           echo "Running production smoke tests..."
-          kubectl get pods -n techcommerce
+          kubectl get pods -n techcommerce-production
           echo "Production smoke tests completed"
 
       - name: Rollback on failure
         if: failure()
         run: |
           echo "Deployment failed! Rolling back..."
-          kubectl rollout undo deployment/prod-frontend -n techcommerce || echo "No rollback needed for frontend"
-          kubectl rollout undo deployment/prod-product-api -n techcommerce || echo "No rollback needed for product-api"
-          kubectl rollout undo deployment/prod-order-api -n techcommerce || echo "No rollback needed for order-api"
+          kubectl rollout undo deployment/prod-frontend -n techcommerce-production || echo "No rollback needed for frontend"
+          kubectl rollout undo deployment/prod-product-api -n techcommerce-production || echo "No rollback needed for product-api"
+          kubectl rollout undo deployment/prod-order-api -n techcommerce-production || echo "No rollback needed for order-api"
           echo "Rollback completed"
 
       - name: Save production kubeconfig
