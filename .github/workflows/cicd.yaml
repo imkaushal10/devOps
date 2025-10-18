@@ -210,15 +210,33 @@ jobs:
           curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
           sudo mv kustomize /usr/local/bin/
 
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Pull Docker images
+        run: |
+          docker pull ${{ secrets.DOCKER_USERNAME }}/techcommerce-frontend:latest
+          docker pull ${{ secrets.DOCKER_USERNAME }}/techcommerce-product-api:latest
+          docker pull ${{ secrets.DOCKER_USERNAME }}/techcommerce-order-api:latest
+
+      - name: Load images into Kind cluster
+        run: |
+          kind load docker-image ${{ secrets.DOCKER_USERNAME }}/techcommerce-frontend:latest --name staging-cluster
+          kind load docker-image ${{ secrets.DOCKER_USERNAME }}/techcommerce-product-api:latest --name staging-cluster
+          kind load docker-image ${{ secrets.DOCKER_USERNAME }}/techcommerce-order-api:latest --name staging-cluster
+
       - name: Update image tags
         run: |
           cd k8s/staging
           kustomize edit set image \
-            techcommerce-frontend=${{ secrets.DOCKER_USERNAME }}/techcommerce-frontend:${{ github.sha }}
+            techcommerce-frontend=${{ secrets.DOCKER_USERNAME }}/techcommerce-frontend:latest
           kustomize edit set image \
-            techcommerce-product-api=${{ secrets.DOCKER_USERNAME }}/techcommerce-product-api:${{ github.sha }}
+            techcommerce-product-api=${{ secrets.DOCKER_USERNAME }}/techcommerce-product-api:latest
           kustomize edit set image \
-            techcommerce-order-api=${{ secrets.DOCKER_USERNAME }}/techcommerce-order-api:${{ github.sha }}
+            techcommerce-order-api=${{ secrets.DOCKER_USERNAME }}/techcommerce-order-api:latest
 
       - name: Deploy to staging
         run: |
@@ -235,26 +253,27 @@ jobs:
             deployment/staging-order-api -n techcommerce-staging || echo "Order API not ready"
 
       - name: Verify rollout status
+        continue-on-error: true
         run: |
-          kubectl rollout status deployment/staging-frontend -n techcommerce-staging --timeout=5m || true
-          kubectl rollout status deployment/staging-product-api -n techcommerce-staging --timeout=5m || true
-          kubectl rollout status deployment/staging-order-api -n techcommerce-staging --timeout=5m || true
+          kubectl rollout status deployment/staging-frontend -n techcommerce --timeout=5m 2>&1 || echo "Frontend rollout failed or timed out"
+          kubectl rollout status deployment/staging-product-api -n techcommerce --timeout=5m 2>&1 || echo "Product API rollout failed or timed out"
+          kubectl rollout status deployment/staging-order-api -n techcommerce --timeout=5m 2>&1 || echo "Order API rollout failed or timed out"
 
       - name: Check deployment status
         run: |
           echo "=== Deployments ==="
-          kubectl get deployments -n techcommerce-staging
+          kubectl get deployments -n techcommerce
           echo ""
           echo "=== Pods ==="
-          kubectl get pods -n techcommerce-staging
+          kubectl get pods -n techcommerce
           echo ""
           echo "=== Services ==="
-          kubectl get services -n techcommerce-staging
+          kubectl get services -n techcommerce
 
       - name: Run smoke tests
         run: |
           echo "Running smoke tests..."
-          kubectl get pods -n techcommerce-staging
+          kubectl get pods -n techcommerce
           echo "Smoke tests completed"
 
       - name: Save kubeconfig as artifact
@@ -305,6 +324,24 @@ jobs:
           curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
           sudo mv kustomize /usr/local/bin/
 
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Pull Docker images
+        run: |
+          docker pull ${{ secrets.DOCKER_USERNAME }}/techcommerce-frontend:latest
+          docker pull ${{ secrets.DOCKER_USERNAME }}/techcommerce-product-api:latest
+          docker pull ${{ secrets.DOCKER_USERNAME }}/techcommerce-order-api:latest
+
+      - name: Load images into Kind cluster
+        run: |
+          kind load docker-image ${{ secrets.DOCKER_USERNAME }}/techcommerce-frontend:latest --name production-cluster
+          kind load docker-image ${{ secrets.DOCKER_USERNAME }}/techcommerce-product-api:latest --name production-cluster
+          kind load docker-image ${{ secrets.DOCKER_USERNAME }}/techcommerce-order-api:latest --name production-cluster
+
       - name: Create backup of current state
         run: |
           echo "Creating backup of production state..."
@@ -322,11 +359,11 @@ jobs:
         run: |
           cd k8s/production
           kustomize edit set image \
-            techcommerce-frontend=${{ secrets.DOCKER_USERNAME }}/techcommerce-frontend:${{ github.sha }}
+            techcommerce-frontend=${{ secrets.DOCKER_USERNAME }}/techcommerce-frontend:latest
           kustomize edit set image \
-            techcommerce-product-api=${{ secrets.DOCKER_USERNAME }}/techcommerce-product-api:${{ github.sha }}
+            techcommerce-product-api=${{ secrets.DOCKER_USERNAME }}/techcommerce-product-api:latest
           kustomize edit set image \
-            techcommerce-order-api=${{ secrets.DOCKER_USERNAME }}/techcommerce-order-api:${{ github.sha }}
+            techcommerce-order-api=${{ secrets.DOCKER_USERNAME }}/techcommerce-order-api:latest
 
       - name: Deploy to production
         id: deploy
@@ -337,43 +374,43 @@ jobs:
       - name: Wait for deployments to be ready
         run: |
           kubectl wait --for=condition=available --timeout=600s \
-            deployment/prod-frontend -n techcommerce-production || echo "Frontend not ready"
+            deployment/prod-frontend -n techcommerce || echo "Frontend not ready"
           kubectl wait --for=condition=available --timeout=600s \
-            deployment/prod-product-api -n techcommerce-production || echo "Product API not ready"
+            deployment/prod-product-api -n techcommerce || echo "Product API not ready"
           kubectl wait --for=condition=available --timeout=600s \
-            deployment/prod-order-api -n techcommerce-production || echo "Order API not ready"
+            deployment/prod-order-api -n techcommerce || echo "Order API not ready"
 
       - name: Verify rollout status
         run: |
-          kubectl rollout status deployment/prod-frontend -n techcommerce-production --timeout=10m
-          kubectl rollout status deployment/prod-product-api -n techcommerce-production --timeout=10m
-          kubectl rollout status deployment/prod-order-api -n techcommerce-production --timeout=10m
+          kubectl rollout status deployment/prod-frontend -n techcommerce --timeout=10m
+          kubectl rollout status deployment/prod-product-api -n techcommerce --timeout=10m
+          kubectl rollout status deployment/prod-order-api -n techcommerce --timeout=10m
 
       - name: Post-deployment verification
         run: |
           echo "Running post-deployment checks..."
           echo "=== Deployments ==="
-          kubectl get deployments -n techcommerce-production
+          kubectl get deployments -n techcommerce
           echo ""
           echo "=== Pods ==="
-          kubectl get pods -n techcommerce-production
+          kubectl get pods -n techcommerce
           echo ""
           echo "=== Services ==="
-          kubectl get services -n techcommerce-production
+          kubectl get services -n techcommerce
 
       - name: Run production smoke tests
         run: |
           echo "Running production smoke tests..."
-          kubectl get pods -n techcommerce-production
+          kubectl get pods -n techcommerce
           echo "Production smoke tests completed"
 
       - name: Rollback on failure
         if: failure()
         run: |
           echo "Deployment failed! Rolling back..."
-          kubectl rollout undo deployment/prod-frontend -n techcommerce-production || echo "No rollback needed for frontend"
-          kubectl rollout undo deployment/prod-product-api -n techcommerce-production || echo "No rollback needed for product-api"
-          kubectl rollout undo deployment/prod-order-api -n techcommerce-production || echo "No rollback needed for order-api"
+          kubectl rollout undo deployment/prod-frontend -n techcommerce || echo "No rollback needed for frontend"
+          kubectl rollout undo deployment/prod-product-api -n techcommerce || echo "No rollback needed for product-api"
+          kubectl rollout undo deployment/prod-order-api -n techcommerce || echo "No rollback needed for order-api"
           echo "Rollback completed"
 
       - name: Save production kubeconfig
