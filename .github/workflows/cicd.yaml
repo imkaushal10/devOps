@@ -348,6 +348,7 @@ jobs:
         run: |
           kubectl cluster-info
           kubectl get nodes
+          echo "Production cluster created successfully"
 
       - name: Install kustomize
         run: |
