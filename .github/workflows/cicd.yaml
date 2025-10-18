@@ -205,6 +205,17 @@ jobs:
           kubectl cluster-info
           kubectl get nodes
 
+      - name: Create Kind Cluster for Production
+        uses: helm/kind-action@v1.8.0
+        with:
+          cluster_name: production-cluster
+          wait: 60s
+
+      - name: Verify cluster is running
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
       - name: Install kustomize
         run: |
           curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
