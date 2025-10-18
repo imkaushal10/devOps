@@ -1,4 +1,4 @@
-name: CI/CD Pipeline # TechCommerce Microservices
+name: TechCommerce CI/CD Pipeline
 
 on:
   push:
@@ -12,11 +12,12 @@ env:
   DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
 
 jobs:
+  # -----------------------------
   # Job 1: Run Tests
+  # -----------------------------
   test:
     name: Run Tests
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -57,7 +58,9 @@ jobs:
         uses: codecov/codecov-action@v3
         if: always()
 
+  # -----------------------------
   # Job 2: Security Scanning
+  # -----------------------------
   security-scan:
     name: Security Scan
     runs-on: ubuntu-latest
@@ -66,12 +69,11 @@ jobs:
       actions: read
       contents: read
       security-events: write
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Run Trivy vulnerability scanner
+      - name: Run Trivy FS scan
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: "fs"
@@ -91,39 +93,40 @@ jobs:
           npm audit --audit-level=moderate
         continue-on-error: true
 
-      - name: Run Safety check (Python)
+      - name: Run Safety (Python)
         run: |
           pip install safety
           cd product-api && safety check -r requirements.txt || true
           cd ../order-api && safety check -r requirements.txt || true
         continue-on-error: true
 
-  # Job 3: Build and Push Docker Images
+  # -----------------------------
+  # Job 3: Build & Push Docker Images
+  # -----------------------------
   build-and-push:
     name: Build and Push Docker Images
     runs-on: ubuntu-latest
     needs: [test, security-scan]
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Set up Docker Buildx
+      - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v2
 
-      - name: Login to Docker Hub
+      - name: Docker login
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Extract metadata
+      - name: Extract Git metadata
         id: meta
         run: |
           echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
           echo "branch=${GITHUB_REF#refs/heads/}" >> $GITHUB_OUTPUT
 
-      - name: Build and push Frontend
+      - name: Build & push Frontend
         uses: docker/build-push-action@v4
         with:
           context: ./frontend
@@ -134,7 +137,7 @@ jobs:
           cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/techcommerce-frontend:buildcache
           cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/techcommerce-frontend:buildcache,mode=max
 
-      - name: Build and push Product API
+      - name: Build & push Product API
         uses: docker/build-push-action@v4
         with:
           context: ./product-api
@@ -145,7 +148,7 @@ jobs:
           cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/techcommerce-product-api:buildcache
           cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/techcommerce-product-api:buildcache,mode=max
 
-      - name: Build and push Order API
+      - name: Build & push Order API
         uses: docker/build-push-action@v4
         with:
           context: ./order-api
@@ -156,31 +159,33 @@ jobs:
           cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/techcommerce-order-api:buildcache
           cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/techcommerce-order-api:buildcache,mode=max
 
-      - name: Scan Frontend image
+      - name: Scan Docker images
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ secrets.DOCKER_USERNAME }}/techcommerce-frontend:latest
-          format: "table"
-          exit-code: "0"
+          format: table
+          exit-code: 0
           severity: "CRITICAL,HIGH"
 
       - name: Scan Product API image
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ secrets.DOCKER_USERNAME }}/techcommerce-product-api:latest
-          format: "table"
-          exit-code: "0"
+          format: table
+          exit-code: 0
           severity: "CRITICAL,HIGH"
 
       - name: Scan Order API image
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ secrets.DOCKER_USERNAME }}/techcommerce-order-api:latest
-          format: "table"
-          exit-code: "0"
+          format: table
+          exit-code: 0
           severity: "CRITICAL,HIGH"
 
-  # Job 4: Deploy to Staging (Automatic)
+  # -----------------------------
+  # Job 4: Deploy to Staging (Auto)
+  # -----------------------------
   deploy-staging:
     name: Deploy to Staging
     runs-on: ubuntu-latest
@@ -189,92 +194,60 @@ jobs:
     environment:
       name: staging
       url: http://staging.techcommerce.local
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Create Kind Cluster
+      - name: Create Kind cluster
         uses: helm/kind-action@v1.8.0
         with:
           cluster_name: staging-cluster
           wait: 60s
-
-      - name: Verify cluster is running
-        run: |
-          kubectl cluster-info
-          kubectl get nodes
 
       - name: Install kustomize
         run: |
           curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
           sudo mv kustomize /usr/local/bin/
 
-      - name: Login to Docker Hub
+      - name: Docker login
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Pull Docker images
+      - name: Load images into Kind
         run: |
           docker pull ${{ secrets.DOCKER_USERNAME }}/techcommerce-frontend:latest
           docker pull ${{ secrets.DOCKER_USERNAME }}/techcommerce-product-api:latest
           docker pull ${{ secrets.DOCKER_USERNAME }}/techcommerce-order-api:latest
-
-      - name: Load images into Kind cluster
-        run: |
           kind load docker-image ${{ secrets.DOCKER_USERNAME }}/techcommerce-frontend:latest --name staging-cluster
           kind load docker-image ${{ secrets.DOCKER_USERNAME }}/techcommerce-product-api:latest --name staging-cluster
           kind load docker-image ${{ secrets.DOCKER_USERNAME }}/techcommerce-order-api:latest --name staging-cluster
 
-      - name: Update image tags
+      - name: Update kustomize images
         run: |
           cd k8s/staging
-          kustomize edit set image \
-            techcommerce-frontend=${{ secrets.DOCKER_USERNAME }}/techcommerce-frontend:latest
-          kustomize edit set image \
-            techcommerce-product-api=${{ secrets.DOCKER_USERNAME }}/techcommerce-product-api:latest
-          kustomize edit set image \
-            techcommerce-order-api=${{ secrets.DOCKER_USERNAME }}/techcommerce-order-api:latest
+          kustomize edit set image techcommerce-frontend=${{ secrets.DOCKER_USERNAME }}/techcommerce-frontend:latest
+          kustomize edit set image techcommerce-product-api=${{ secrets.DOCKER_USERNAME }}/techcommerce-product-api:latest
+          kustomize edit set image techcommerce-order-api=${{ secrets.DOCKER_USERNAME }}/techcommerce-order-api:latest
 
-      - name: Deploy to staging
+      - name: Apply manifests
         run: |
           kubectl apply -k k8s/staging
-          echo "Staging deployment initiated"
 
-      - name: Check pods status safely
+      - name: Wait for pods
         run: |
-          echo "=== Deployments ==="
-          kubectl get deployments -n techcommerce-staging || true
-          echo ""
-          echo "=== Pods ==="
-          kubectl get pods -n techcommerce-staging || true
-          echo ""
-          echo "=== Pod Details ==="
-          kubectl describe pods -n techcommerce-staging || true
-          echo ""
-          echo "=== Pod Logs (last 50 lines) ==="
-          kubectl logs -n techcommerce-staging --all-containers --tail=50 || true
+          kubectl wait --for=condition=ready pod -l app=frontend -n techcommerce-staging --timeout=300s || echo "Frontend not ready"
+          kubectl wait --for=condition=ready pod -l app=product-api -n techcommerce-staging --timeout=300s || echo "Product API not ready"
+          kubectl wait --for=condition=ready pod -l app=order-api -n techcommerce-staging --timeout=300s || echo "Order API not ready"
 
-      - name: Run smoke tests
+      - name: Verify deployments
         run: |
-          echo "Running smoke tests..."
-          kubectl get pods -n techcommerce-staging
-          echo "Smoke tests completed"
+          kubectl get deployments,pods,services -n techcommerce-staging
 
-      - name: Save kubeconfig
-        run: |
-          kubectl config view --raw > staging-kubeconfig.yaml
-
-      - name: Upload kubeconfig
-        uses: actions/upload-artifact@v4
-        with:
-          name: staging-kubeconfig
-          path: staging-kubeconfig.yaml
-          retention-days: 1
-
-  # Job 5: Deploy to Production (Manual Approval)
+  # -----------------------------
+  # Job 5: Deploy to Production (Manual Approval + Rollback)
+  # -----------------------------
   deploy-production:
     name: Deploy to Production
     runs-on: ubuntu-latest
@@ -283,102 +256,58 @@ jobs:
     environment:
       name: production
       url: http://techcommerce.local
-
+      reviewers:
+        - your-team-member
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Create Kind Cluster
+      - name: Create Kind cluster
         uses: helm/kind-action@v1.8.0
         with:
           cluster_name: production-cluster
           wait: 60s
-
-      - name: Verify cluster is running
-        run: |
-          kubectl cluster-info
-          kubectl get nodes
 
       - name: Install kustomize
         run: |
           curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
           sudo mv kustomize /usr/local/bin/
 
-      - name: Login to Docker Hub
+      - name: Docker login
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Pull Docker images
+      - name: Load images
         run: |
           docker pull ${{ secrets.DOCKER_USERNAME }}/techcommerce-frontend:latest
           docker pull ${{ secrets.DOCKER_USERNAME }}/techcommerce-product-api:latest
           docker pull ${{ secrets.DOCKER_USERNAME }}/techcommerce-order-api:latest
-
-      - name: Load images into Kind cluster
-        run: |
           kind load docker-image ${{ secrets.DOCKER_USERNAME }}/techcommerce-frontend:latest --name production-cluster
           kind load docker-image ${{ secrets.DOCKER_USERNAME }}/techcommerce-product-api:latest --name production-cluster
           kind load docker-image ${{ secrets.DOCKER_USERNAME }}/techcommerce-order-api:latest --name production-cluster
 
-      - name: Backup current state
-        run: |
-          mkdir -p backups
-          kubectl get all --all-namespaces -o yaml > backups/backup-$(date +%Y%m%d-%H%M%S).yaml || true
-
-      - name: Upload backup
-        uses: actions/upload-artifact@v4
-        with:
-          name: production-backup
-          path: backups/
-          retention-days: 30
-
-      - name: Update image tags
+      - name: Update kustomize images
         run: |
           cd k8s/production
-          kustomize edit set image \
-            techcommerce-frontend=${{ secrets.DOCKER_USERNAME }}/techcommerce-frontend:latest
-          kustomize edit set image \
-            techcommerce-product-api=${{ secrets.DOCKER_USERNAME }}/techcommerce-product-api:latest
-          kustomize edit set image \
-            techcommerce-order-api=${{ secrets.DOCKER_USERNAME }}/techcommerce-order-api:latest
+          kustomize edit set image techcommerce-frontend=${{ secrets.DOCKER_USERNAME }}/techcommerce-frontend:latest
+          kustomize edit set image techcommerce-product-api=${{ secrets.DOCKER_USERNAME }}/techcommerce-product-api:latest
+          kustomize edit set image techcommerce-order-api=${{ secrets.DOCKER_USERNAME }}/techcommerce-order-api:latest
 
-      - name: Deploy to production
+      - name: Deploy manifests
         run: |
           kubectl apply -k k8s/production
-          echo "Production deployment initiated"
 
-      - name: Check pods status safely
+      - name: Wait for pods
         run: |
-          echo "=== Deployments ==="
-          kubectl get deployments -n techcommerce-production || true
-          echo ""
-          echo "=== Pods ==="
-          kubectl get pods -n techcommerce-production || true
-          echo ""
-          echo "=== Pod Details ==="
-          kubectl describe pods -n techcommerce-production || true
-          echo ""
-          echo "=== Pod Logs (last 50 lines) ==="
-          kubectl logs -n techcommerce-production --all-containers --tail=50 || true
+          kubectl wait --for=condition=ready pod -l app=frontend -n techcommerce-production --timeout=300s || echo "Frontend not ready"
+          kubectl wait --for=condition=ready pod -l app=product-api -n techcommerce-production --timeout=300s || echo "Product API not ready"
+          kubectl wait --for=condition=ready pod -l app=order-api -n techcommerce-production --timeout=300s || echo "Order API not ready"
 
-      - name: Rollback on failure
+      - name: Rollback if failed
         if: failure()
         run: |
-          echo "Deployment failed! Rolling back..."
-          kubectl rollout undo deployment/prod-frontend -n techcommerce-production || echo "No rollback needed for frontend"
-          kubectl rollout undo deployment/prod-product-api -n techcommerce-production || echo "No rollback needed for product-api"
-          kubectl rollout undo deployment/prod-order-api -n techcommerce-production || echo "No rollback needed for order-api"
-          echo "Rollback completed"
-
-      - name: Save kubeconfig
-        run: |
-          kubectl config view --raw > production-kubeconfig.yaml
-
-      - name: Upload kubeconfig
-        uses: actions/upload-artifact@v4
-        with:
-          name: production-kubeconfig
-          path: production-kubeconfig.yaml
-          retention-days: 1
+          kubectl rollout undo deployment/prod-frontend -n techcommerce-production
+          kubectl rollout undo deployment/prod-product-api -n techcommerce-production
+          kubectl rollout undo deployment/prod-order-api -n techcommerce-production
